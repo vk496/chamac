@@ -1,0 +1,497 @@
+#!/bin/bash
+
+
+########## Modo DEBUG ##########
+##			      ##
+          CHAMAC_DEBUG=0      
+##			      ##
+################################
+
+########## 08-09-2013 Chamac 0.1
+##
+## #Fecha de Salida
+##
+########## 10-09-2013 Chamac 0.2
+## 
+## #Detección de clientes DHCP
+## #Optimización del código
+## #Detección de deaemons de red
+## #Aviso de macchanger desactualizado
+## #Comprobar permisos root
+##
+########## 11-09-2013 Chamac 0.3
+## 
+## #Añadido menu de ayuda
+## #Posibilidad de ejecutar script con el sistema
+## #Eliminada dependencia macchanger, puede funcionar sin el
+## #Añadidda posibilidad de usar macchanger si se quisiese
+## 
+########## 12-09-2013 Chamac 0.4
+##
+## #Corregido bug cuando wicd esta off (gracias a @USUARIONUEVO)
+## #Corregido fallo de colores cuando se pedia ser root
+## #Añadido menu para restaurar las MAC
+## #Añadido menu para ver las MAC actuales
+## #Fixedo el archivo que se genera para --autoboot
+## #Pequeñas mejoras en el codigo
+##
+########## 16-09-2013 Chamac 0.5
+##
+## Reducido información del script ( mas minimalista)
+## Modificado representacion de las interfaces
+## Añadidas varias rutas alternativas para MAC Permanente
+## Corregido codigo de peticion de permisos Root
+## Pequeños cambios en el codigo
+##
+########## 19-09-2013 Chamac 0.6
+##
+## Arreglado problema de cambios de MAC fallidos
+## Añadido comprobador de ruta de chamac
+## Optimizado deteccion de daemon
+## Agregada salida DEBUG en consola
+## Pequeñas optimizaciones en el codigo
+## Bug interno de rutas en la opcion -r para autoejecutarse
+##
+##########
+
+
+########## Agradecimientos
+##
+## Me gustaría dar las gracias al equipo de www.seguridadwireless.net por el maravilloso trabajo que estan haciendo.
+## En especial, quiero dar las gracias a @USUARIONUEVO por sus inmediatos informes sorbre los bugs del script y consejos
+## para el proyecto, a @warcry por el consejo de adaptar el script a mas distros linux, a @geminis_demon por sus ayudas con 
+## el bash, y por ultimo a @alister, por mostrarme datos muy tecnicos de Linux (y necesarios) para desarrollar mi script y
+## darme muy buenas ideas para el script
+##
+##########
+
+ruta=$(which $0)
+if [ $CHAMAC_DEBUG = 1 ]; then
+    ## set to /dev/stdout when in developer/debugger mode
+    export chamac_output_device=/dev/stdout
+    else
+    ## set to /dev/null when in production mode
+     export chamac_output_device=/dev/null
+fi
+
+function conditional_clear() {
+    if [[ "$chamac_output_device" != "/dev/stdout" ]]; then clear; fi
+}
+
+#Detectar interfaces
+readarray -t interfaces < <(ip link | grep "<" | cut -d " " -f 2 | cut -d ":" -f 1 | grep -v lo)
+#Comprobar estado del autoboot
+macchangermode=0
+if [ -f /etc/xdg/autostart/autochamac.desktop ]; then
+autoboot=1
+else
+autoboot=0
+fi
+#Dar colores al estado
+if [ $autoboot = 1 ]; then
+autobootstatus='\e[1;32mOn\e[0m'
+else
+autobootstatus='\e[1;31mOff\e[0m'
+fi
+#Menu de ayuda
+if [ "$1" = "-v" -o "$1" = "--version" ]; then
+echo 0.6
+exit
+elif [ "$1" = "-m" -o "$1" = "--macchanger" ]; then
+macchangermode=1
+elif [ "$1" = "-s" -o "$1" = "--show" ]; then
+conditional_clear
+for INTERFACE in ${interfaces[@]}; do
+    for N in $(ls /run/udev/data|grep "^n[0-9]$"); do
+      MODEL_ID="$(find /sys/devices -name "$INTERFACE"|rev|cut -d'/' -f3-|rev)"
+	  if [ "$(cat /run/udev/data/$N|grep "$MODEL_ID")" ]; then
+	  rutaprincipal=$(cat /run/udev/data/$N|grep "MATCHADDR")
+	    	if [ $rutaprincipal ]; then
+	    	MAC_ORIGINAL=$(cat /run/udev/data/$N|grep "MATCHADDR"|cut -d'=' -f2-)
+	    	else
+		   rutasecundaria=$(cat /etc/udev/rules.d/70-persistent-net.rules | grep $INTERFACE | awk '{print $4}' | grep -o -P '(?<=").*(?=")')
+		    if [ $rutasecundaria ]; then
+			MAC_ORIGINAL=$(cat /etc/udev/rules.d/70-persistent-net.rules | grep $INTERFACE | awk '{print $4}' | grep -o -P '(?<=").*(?=")')
+		    else
+			  if [ -e /sys/class/net/$INTERFACE/phy80211/addresses ]; then
+			    	MAC_ORIGINAL=$(cat /sys/class/net/$INTERFACE/phy80211/addresses)
+			  else
+			      rutaultima=$(ethtool -P $INTERFACE | grep Permanent)
+				if [ "ethtool -P $INTERFACE | grep Permanent" ]; then
+				    MAC_ORIGINAL=$(ethtool -P $INTERFACE | grep Permanent | awk '{print $3}')
+				else
+				MAC_ORIGINAL="??:??:??:??:??:??"
+				fi
+
+			  fi
+			fi
+		    fi
+	    	MAC_ACTUAL="$(cat /sys/class/net/$INTERFACE/address)"
+	    		echo "================================\\"
+			echo -e "   INTERFACE:\e[1;35m $INTERFACE \e[0m 		 \\"
+			echo -e "MAC ORIGINAL: $MAC_ORIGINAL	  #"
+			echo -e "  MAC ACTUAL:\e[1;31m $MAC_ACTUAL \e[0m /"
+			echo "================================/"
+			break
+	  fi
+    done
+done
+exit
+elif [ "$1" = "-r" -o "$1" = "--restore" ]; then
+if [ $(/usr/bin/id -u) != 0 ]; then
+    echo -e "Privileges \e[0;31mroot\e[0m--->	\e[1;31mError\e[0m"
+    exit
+fi
+conditional_clear
+#Definir clientes DHCP
+if ps -A | grep dhcpcd &>${chamac_output_device}; then
+dhcpclientrestore=dhcpcd
+fi
+
+if ps -A | grep dhclient &>${chamac_output_device}; then
+dhcpclientrestore=dhclient
+fi
+
+if ps -A | grep pump &>${chamac_output_device}; then
+dhcpclientrestore=pump
+fi
+
+#Comprobar el daemon del sistema
+readarray -t listadedaemons < <(echo "/etc/rc.d/rc.inet1
+/etc/rc.d/wicd
+/etc/rc.d/rc.wicd
+/etc/rc.d/network-manager
+/etc/rc.d/rc.network-manager
+/etc/init.d/wicd
+/etc/init.d/network-manager")
+
+for comprobandodaemon in ${listadedaemons[@]}; do
+if [ -e "$comprobandodaemon" ]; then
+    chamac_detected_daemon="$comprobandodaemon"
+    break 
+fi
+done
+
+if [[ "${chamac_detected_daemon}" != "" ]]; then
+    "$chamac_detected_daemon" stop &>${chamac_output_device}
+  else
+    killall -9 wpa_supplicant &>$chamac_output_device
+    killall -9 $dhcpclient &>$chamac_output_device
+fi
+#Comprobar las MAC
+for INTERFACE in ${interfaces[@]}; do
+    for N in $(ls /run/udev/data|grep "^n[0-9]$"); do
+      MODEL_ID="$(find /sys/devices -name "$INTERFACE"|rev|cut -d'/' -f3-|rev)"
+	  if [ "$(cat /run/udev/data/$N|grep "$MODEL_ID")" ]; then
+	  rutaprincipal=$(cat /run/udev/data/$N|grep "MATCHADDR")
+	    	if [ $rutaprincipal ]; then
+	    	MAC_ORIGINAL=$(cat /run/udev/data/$N|grep "MATCHADDR"|cut -d'=' -f2-)
+	    	else
+		   rutasecundaria=$(cat /etc/udev/rules.d/70-persistent-net.rules | grep $INTERFACE | awk '{print $4}' | grep -o -P '(?<=").*(?=")')
+		    if [ $rutasecundaria ]; then
+			MAC_ORIGINAL=$(cat /etc/udev/rules.d/70-persistent-net.rules | grep $INTERFACE | awk '{print $4}' | grep -o -P '(?<=").*(?=")')
+		    else
+			  if [ -e /sys/class/net/$INTERFACE/phy80211/addresses ]; then
+			    	MAC_ORIGINAL=$(cat /sys/class/net/$INTERFACE/phy80211/addresses)
+			  else
+			      rutaultima=$(ethtool -P $INTERFACE | grep Permanent)
+				if [ "ethtool -P $INTERFACE | grep Permanent" ]; then
+				    MAC_ORIGINAL=$(ethtool -P $INTERFACE | grep Permanent | awk '{print $3}')
+				else
+				MAC_ORIGINAL="??:??:??:??:??:??"
+				fi
+
+			  fi
+			fi
+		    fi
+		  while [ "$MAC_ORIGINAL" != "$MAC_ACTUAL" ]; do
+		    ifconfig $INTERFACE down
+		    ip link set $INTERFACE address $MAC_ORIGINAL
+		    ifconfig $INTERFACE up
+		    break && $0 -r
+		    conditional_clear
+		  done
+		break
+	  fi
+    done
+done
+#Reiniciar las daemons
+if [ "$chamac_detected_daemon" != "" ]; then
+"$chamac_detected_daemon" start &>${chamac_output_device}
+else
+    #Reiniciar posible servicio DHCP
+if [ "$chamac_detected_daemon" == "" ]; then
+  if [ $dhcpclient ]; then
+    sleep 2
+    $dhcpclient &>${chamac_output_device}
+  fi
+
+fi
+fi
+$0 -s
+exit
+elif [ "$1" = "-a" -o "$1" = "--autostart" ]; then
+conditional_clear
+if [ $(/usr/bin/id -u) = 0 ]; then
+    echo -e "Privileges \e[0;31mroot\e[0m--->	\e[1;32mOK!\e[0m"
+else
+    echo -e "Privileges \e[0;31mroot\e[0m--->	\e[1;31mError\e[0m"
+    exit
+fi
+if [ $ruta = /usr/bin/chamac ]; then
+    echo -e "Chamac \e[0;31minstalldir\e[0m--->	\e[1;32mOK!\e[0m"
+else
+    echo -e "Chamac \e[0;31minstalldir\e[0m--->	\e[1;31mError\e[0m"
+    echo
+    echo -e "Use \e[1;33mcp chamac /usr/bin/\e[0m"
+    exit
+fi
+if [ $autoboot = 1 ]; then
+rm -f /etc/xdg/autostart/autochamac.desktop
+elif [ $autoboot = 0 ]; then
+echo "[Desktop Entry]
+Exec=/usr/bin/chamac
+StartupNotify=true
+Terminal=false
+Type=Application
+X-GNOME-Autostart-enabled=true"> /etc/xdg/autostart/autochamac.desktop
+fi
+echo
+$0 -h
+echo
+echo -e "Ten en cuenta que tendras que dar los permisos necesarios para que el script se ejecute como \e[1;31mroot\e[0m junto con el sistema, sino, no tendra efecto"
+exit
+elif [ "$1" = "-h" -o "$1" = "--help" ]; then
+echo "Chamac v0.6 (Change all MAC)"
+echo "Uso: chamac [options]"
+echo
+echo "  -a,  --autostart		Inicia el script con el sistema"
+echo -e "					Estado actual: $autobootstatus"
+echo "  -m,  --macchanger		Usar macchanger para generar MAC"
+echo "  -r,  --restore		Restaura las MAC Original"
+echo "  -s,  --show			Muestra todas las MAC"
+echo "  -h,  --help			Muestra la pantalla de ayuda"
+echo "  -v,  --version		Muestra la version de la herramienta"
+echo
+echo "Reporta los fallos a vk18496@gmail.com"
+exit
+fi
+
+conditional_clear
+echo -e "=========================================="
+echo -e "|           \e[1;34mChaMAC\e[0m 0.6 by vk496          |"
+echo -e "|                                        |"
+echo -e "|          netenti.blogspot.com          |"
+echo -e "|                                        |"
+echo -e "|    Pequeño script para cambiar todas   |"
+echo -e "|  las direcciones MAC de tu PC por unas |"
+echo -e "|  aleatorias. Usa \e[1;32mchamac --help\e[0m para    |"
+echo -e "|  mas info.                             |"
+echo -e "|                                        |"
+echo -e "|     Para \e[1;31mwww.seguridadwireless.net\e[0m     |"
+echo -e "=========================================="
+echo -e
+echo
+# Comprobar que macchanger esta actulizado
+# 53 lineas = vieja
+# 52 lineas = version Ubuntu
+# 219 lineas =version 2013
+
+if [ $(/usr/bin/id -u) = 0 ]; then
+    echo -e "Privileges \e[0;31mroot\e[0m--->	\e[1;32mOK!\e[0m"
+else
+    echo -e "Privileges \e[0;31mroot\e[0m--->	\e[1;31mError\e[0m"
+    exit
+fi
+
+if [ $ruta = /usr/bin/chamac ]; then
+    echo -e "Chamac \e[0;31minstalldir\e[0m--->	\e[1;32mOK!\e[0m"
+else
+    echo -e "Chamac \e[0;31minstalldir\e[0m--->	\e[1;31mError\e[0m"
+    echo
+    echo -e "Use \e[1;33mcp chamac /usr/bin/\e[0m"
+    exit
+fi
+if [ $autoboot = 1 ]; then
+echo -e "Autoboot Status--->	$autobootstatus"
+elif [ $autoboot = 0 ]; then
+echo -e "Autoboot Status--->	$autobootstatus"
+fi
+
+if [ $macchangermode = 1 ]; then
+echo -e "Chamac Mode------->	\e[1;32mMacchanger\e[0m"
+if type macchanger &>${chamac_output_device}; then
+if [ $(cat $(which macchanger) | wc -l) = 53 ]; then
+echo -e "\e[0;31mmacchanger\e[0m Status->	\e[1;33mObsoleted\e[0m"
+macchangerviejo=1
+else
+echo -e "\e[0;31mmacchanger\e[0m Status->	\e[1;32mOK!\e[0m"
+macchangerviejo=0
+fi
+else
+echo -e "\e[0;31mmacchanger\e[0m Status->	\e[1;31mNot installed!\e[0m"
+exit
+fi
+elif [ $macchangermode = 0 ]; then
+echo -e "Chamac Mode------->	\e[1;32mNormal\e[0m"
+fi
+#Buscar posibles clientes DHCP
+clientesdhcp() {
+if ps -A | grep dhcpcd &>${chamac_output_device}; then
+dhcpclient=dhcpcd
+fi
+
+if ps -A | grep dhclient &>${chamac_output_device}; then
+dhcpclient=dhclient
+fi
+
+if ps -A | grep pump &>${chamac_output_device}; then
+dhcpclient=pump
+fi
+}
+#Comprobar el daemon del sistema
+clientedaemon() {
+readarray -t listadedaemons < <(echo "/etc/rc.d/rc.inet1
+/etc/rc.d/wicd
+/etc/rc.d/rc.wicd
+/etc/rc.d/network-manager
+/etc/rc.d/rc.network-manager
+/etc/init.d/wicd
+/etc/init.d/network-manager")
+
+for comprobandodaemon in ${listadedaemons[@]}; do
+if [ -e "$comprobandodaemon" ]; then
+    chamac_detected_daemon="$comprobandodaemon"
+    break 
+fi
+done
+
+if [[ "${chamac_detected_daemon}" != "" ]]; then
+    "$chamac_detected_daemon" stop &>${chamac_output_device}
+  else
+    killall -9 wpa_supplicant &>$chamac_output_device
+    killall -9 $dhcpclient &>$chamac_output_device
+fi
+detectarmac
+}
+detectarmac() {
+lista=$(echo ${interfaces[@]} | wc -w)
+echo
+echo -e "Network inteface/s: 	\e[0;31m$lista\e[0m "
+echo
+echo -e "\e[1;31m${interfaces[@]}\e[0m"
+echo
+echo
+sleep 3
+cambiarmac
+}
+cambiarmac() {
+mac() {
+#Cambiar MAC con ifconfig
+viaifconfig() {
+
+for (( c=1; c<=6; c++ ))
+do
+for INTERFACE in ${interfaces[@]}; do
+		MAC_ACTUAL="$(cat /sys/class/net/$INTERFACE/address)"
+	
+	  until [ -N $MAC_ACTUAL ]; do
+	  ifconfig $INTERFACE down &>${chamac_output_device}
+	  ip link set $INTERFACE down &>${chamac_output_device}
+	  ip link set dev $INTERFACE address $(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//') &>${chamac_output_device}
+	  break
+	  conditional_clear
+	done
+done
+done
+
+}
+
+#Cmabar MAC con macchanger
+viamacchanger() {
+for interfaz in "${interfaces[@]}"; do
+ifconfig $interfaz down &>${chamac_output_device}
+ip link set $interfaz down &>${chamac_output_device}
+macchanger -r $interfaz &>${chamac_output_device}
+done
+}
+if [ $macchangermode = 0 ]; then
+viaifconfig
+elif [ $macchangermode = 1 ]; then
+viamacchanger
+fi
+conditional_clear
+interfacesup
+}
+interfacesup() {
+#Levantar interfaces
+for curInterfaceup in "${interfaces[@]}"; do
+    ifconfig $curInterfaceup up
+    ip link set $curInterfaceup up
+done
+listo
+}
+mac
+}
+listo() {
+for INTERFACE in ${interfaces[@]}; do
+    for N in $(ls /run/udev/data|grep "^n[0-9]$"); do
+      MODEL_ID="$(find /sys/devices -name "$INTERFACE"|rev|cut -d'/' -f3-|rev)"
+	  if [ "$(cat /run/udev/data/$N|grep "$MODEL_ID")" ]; then
+	  rutaprincipal=$(cat /run/udev/data/$N|grep "MATCHADDR")
+	    	if [ $rutaprincipal ]; then
+	    	MAC_ORIGINAL=$(cat /run/udev/data/$N|grep "MATCHADDR"|cut -d'=' -f2-)
+	    	else
+		   rutasecundaria=$(cat /etc/udev/rules.d/70-persistent-net.rules | grep $INTERFACE | awk '{print $4}' | grep -o -P '(?<=").*(?=")')
+		    if [ $rutasecundaria ]; then
+			MAC_ORIGINAL=$(cat /etc/udev/rules.d/70-persistent-net.rules | grep $INTERFACE | awk '{print $4}' | grep -o -P '(?<=").*(?=")')
+		    else
+			  if [ -e /sys/class/net/$INTERFACE/phy80211/addresses ]; then
+			    	MAC_ORIGINAL=$(cat /sys/class/net/$INTERFACE/phy80211/addresses)
+			  else
+			      rutaultima=$(ethtool -P $INTERFACE | grep Permanent)
+				if [ "ethtool -P $INTERFACE | grep Permanent" ]; then
+				    MAC_ORIGINAL=$(ethtool -P $INTERFACE | grep Permanent | awk '{print $3}')
+				else
+				MAC_ORIGINAL="??:??:??:??:??:??"
+				fi
+
+			  fi
+			fi
+		    fi
+	    	MAC_ACTUAL="$(cat /sys/class/net/$INTERFACE/address)"
+	    		echo "================================\\"
+			echo -e "   INTERFACE:\e[1;35m $INTERFACE \e[0m 		 \\"
+			echo -e "MAC ORIGINAL: $MAC_ORIGINAL	  #"
+			echo -e "  MAC ACTUAL:\e[1;31m $MAC_ACTUAL \e[0m /"
+			echo "================================/"
+			break
+	  fi
+    done
+done
+echo
+echo -e "\e[1;36mReiniciando interfaces y DHCP\e[0m ... "
+sleep 3
+echo -e "Mediante \e[1;33mifconfig\e[0m podras comprobar que la mac realmente ha cambiado."
+
+if [ "$chamac_detected_daemon" != "" ]; then
+echo -e "Iniciando servcio \e[1;31m${chamac_detected_daemon}\e[0m"
+"$chamac_detected_daemon" start &>${chamac_output_device}
+else
+    #Reiniciar posible servicio DHCP
+if [ "$chamac_detected_daemon" == "" ]; then
+  if [ $dhcpclient ]; then
+    sleep 2
+    $dhcpclient &>${chamac_output_device}
+    echo -e "Cliente \e[1;31m$dhcpclient\e[0m reiniciado"
+  fi
+
+fi
+fi
+echo
+echo -e "Recuerda revisar las demas opciones con \e[1;32mchamac --help\e[0m"
+echo
+echo -e "Tareas realizadas ... Hasta pronto :)"
+exit
+}
+clientesdhcp && clientedaemon
