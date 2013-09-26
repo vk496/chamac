@@ -59,6 +59,15 @@
 ## Añadida opcion para MAC personalizada
 ## Optimizados mensajes informativos
 ##
+########## 26-09-2013 Chamac 0.8
+##
+## Corregido bug que no eliminaba la entrada de /etc/sudoers
+## Añadido OUI para mostrar el Vendor
+## Añadida funcion --update para actualizar la base de deatos OUI
+## Añadida database de OUI
+## Optimizados mensajes informativos
+## Estructurado codigo fuente para mejor comprension
+##
 ##########
 
 
@@ -76,9 +85,9 @@ ruta=$(which $0)
 if [ $CHAMAC_DEBUG = 1 ]; then
     ## set to /dev/stdout when in developer/debugger mode
     export chamac_output_device=/dev/stdout
-    else
+  else
     ## set to /dev/null when in production mode
-     export chamac_output_device=/dev/null
+    export chamac_output_device=/dev/null
 fi
 
 function conditional_clear() {
@@ -91,48 +100,129 @@ readarray -t interfaces < <(ip link | grep "<" | cut -d " " -f 2 | cut -d ":" -f
 macchangermode=0
 custommacmode=0
 if [ -f /etc/xdg/autostart/autochamac.desktop ]; then
-autoboot=1
-else
-autoboot=0
+    autoboot=1
+  else
+    autoboot=0
 fi
-#Dar colores al estado
+#Dar colores al estado del autobbot
 if [ $autoboot = 1 ]; then
-autobootstatus='\e[1;32mOn\e[0m'
-else
-autobootstatus='\e[1;31mOff\e[0m'
+    autobootstatus='\e[1;32mOn\e[0m'
+  else
+    autobootstatus='\e[1;31mOff\e[0m'
 fi
+#Detectar base de datos actual
+if [ -f /usr/share/chamac/manuf ]; then
+    OUIruta="/usr/share/chamac/manuf"
+    dbMAC=$(cat /usr/share/chamac/manuf | grep -v ^[#] | wc -l)
+elif [ -f /etc/manuf ]; then
+    OUIruta="/etc/manuf"
+    dbMAC=$(cat /etc/manuf | grep -v ^[#] | wc -l)
+elif [ -f /usr/share/wireshark/manuf ]; then
+    OUIruta="/usr/share/wireshark/manuf"
+    dbMAC=$(cat /usr/share/wireshark/manuf | grep -v ^[#] | wc -l)
+  else
+    OUIruta="N/A"
+    dbMAC="N/A"
+fi
+
 #Menu de ayuda
 if [ "$1" = "-v" -o "$1" = "--version" ]; then
-echo 0.7
-exit
+    echo 0.8
+    exit
 elif [ "$1" = "-m" -o "$1" = "--macchanger" ]; then
-macchangermode=1
+    macchangermode=1
+elif [ "$1" = "-u" -o "$1" = "--update" ]; then
+if [ $(/usr/bin/id -u) != 0 ]; then
+    echo -e "Privileges \e[0;31mroot\e[0m--->	\e[1;31mError\e[0m"
+    exit
+fi
+
+conditional_clear
+echo -ne "Check Internet Connection--->	"
+if ping -c4 google.es&>$chamac_output_device; then
+    echo -e "\e[1;32mOK!\e[0m"
+    sleep 3
+  if [ ! -d /usr/share/chamac/manuf ]; then
+    mkdir /usr/share/chamac/ &>${chamac_output_device}
+conditional_clear
+   else
+    rm -f /usr/share/chamac/manuf &>${chamac_output_device}
+  fi
+    wget -O /usr/share/chamac/manuf anonsvn.wireshark.org/wireshark/trunk/manuf |& grep "%" 
+conditional_clear
+    $0 -h
+  else
+    echo -e "\e[1;31mError\e[0m"
+fi
+exit
 elif [ "$1" = "-s" -o "$1" = "--show" ]; then
 conditional_clear
 for INTERFACE in ${interfaces[@]}; do
     rutasecundaria=$(cat /etc/udev/rules.d/70-persistent-net.rules | grep $INTERFACE | awk '{print $4}' | grep -o -P '(?<=").*(?=")')
-	    if [ $rutasecundaria ]; then
-		    MAC_ORIGINAL=$(cat /etc/udev/rules.d/70-persistent-net.rules | grep $INTERFACE | awk '{print $4}' | grep -o -P '(?<=").*(?=")')
-	    else
-		    if [ -e /sys/class/net/$INTERFACE/phy80211/addresses ]; then
-			  MAC_ORIGINAL=$(cat /sys/class/net/$INTERFACE/phy80211/addresses)
-		    else
-			  rutaultima=$(ethtool -P $INTERFACE | grep Permanent)
-			    if [ "ethtool -P $INTERFACE | grep Permanent" ]; then
-				  MAC_ORIGINAL=$(ethtool -P $INTERFACE | grep Permanent | awk '{print $3}')
-			    else
-				  MAC_ORIGINAL="??:??:??:??:??:??"
-			    fi
+  if [ $rutasecundaria ]; then
+      MAC_ORIGINAL=$(cat /etc/udev/rules.d/70-persistent-net.rules | grep $INTERFACE | awk '{print $4}' | grep -o -P '(?<=").*(?=")')
+    else
+	if [ -e /sys/class/net/$INTERFACE/phy80211/addresses ]; then
+	    MAC_ORIGINAL=$(cat /sys/class/net/$INTERFACE/phy80211/addresses)
+	  else
+	    rutaultima=$(ethtool -P $INTERFACE | grep Permanent)
+	      if [ "ethtool -P $INTERFACE | grep Permanent" ]; then
+		  MAC_ORIGINAL=$(ethtool -P $INTERFACE | grep Permanent | awk '{print $3}')
+		else
+		  MAC_ORIGINAL="??:??:??:??:??:??"
+	      fi
+	fi
+  fi
+    MAC_ACTUAL="$(cat /sys/class/net/$INTERFACE/address)"
+    
+if [ ! $OUIruta = "N/A" ]; then	
+    MAC_A="$(echo $MAC_ACTUAL| tr -d :)"
+    MAC_O="$(echo $MAC_ORIGINAL| tr -d :)"
+		
+    MAClist=$(cat $OUIruta | sed 's/\t/ /g' | awk '{ gsub("-", "", $1); gsub(":", "", $1); gsub("/44", "", $1); gsub("/40", "", $1); gsub("/36", "", $1); gsub("/32", "", $1); gsub("/25", "", $1); gsub("/24", "", $1); gsub("/16", "", $1); gsub(/[ ]+/," "); print }')
+    i=6
 
-		    fi
-	     fi
-		    
-	    	MAC_ACTUAL="$(cat /sys/class/net/$INTERFACE/address)"
-	    		echo "================================\\"
-			echo -e "   INTERFACE:\e[1;35m $INTERFACE \e[0m 		 \\"
-			echo -e "MAC ORIGINAL: $MAC_ORIGINAL	  #"
-			echo -e "  MAC ACTUAL:\e[1;31m $MAC_ACTUAL \e[0m /"
-			echo "================================/"
+while [ $i -le 12 ]; do
+      SEARCHING_RESULT_o=$(echo "$MAClist" |grep -i ^${MAC_O:0:i}|perl -pi -e 's/#/\e[0m\e[1;31m-\e[0m\e[1;34m/g')
+      SEARCHING_EXITCODE_o=$?
+      lineas_o=$(echo "$SEARCHING_RESULT_o" | grep -c "")
+     if [ "$lineas_o" = 1 ]; then
+	if [ "$SEARCHING_EXITCODE_o" = 0 ]; then
+	    FABRICANTE_MAC_ORIGINAL="(\e[1;34m$(echo "$SEARCHING_RESULT_o"|cut -d " " -f 2-22)\e[0m)"
+	fi
+     fi
+
+      SEARCHING_RESULT=$(echo "$MAClist" |grep -i ^${MAC_A:0:i}|perl -pi -e 's/#/-/g')
+      SEARCHING_EXITCODE=$?
+      lineas=$(echo "$SEARCHING_RESULT" | grep -c "")
+     if [ "$lineas" = 1 ]; then
+	if [ "$SEARCHING_EXITCODE" = 0 ]; then
+	    FABRICANTE_MAC_FALSA=$(echo "$SEARCHING_RESULT"|cut -d " " -f 2-22)
+	fi
+	break
+     fi
+
+    if [ $i -eq 12 ]; then
+      echo unknown
+    fi
+
+    let i=i+1
+done
+
+  else
+      FABRICANTE_MAC_FALSA="\e[1;31mN/A\e[0m"
+      FABRICANTE_MAC_ORIGINAL="(\e[1;31mN/A\e[0m)"
+fi
+
+if [ -z $FABRICANTE_MAC_FALSA ]; then
+  FABRICANTE_MAC_FALSA="unknown"
+fi
+	    	
+	    		echo "=================================================\\"
+			echo -e "   INTERFACE:\e[1;35m $INTERFACE \e[0m 		 	"
+			echo -e "MAC ORIGINAL: $MAC_ORIGINAL $FABRICANTE_MAC_ORIGINAL"
+			echo -e "  MAC ACTUAL:\e[1;31m $MAC_ACTUAL \e[0m($FABRICANTE_MAC_FALSA)	"
+			echo "=================================================/"
 done
 exit
 elif [ "$1" = "-r" -o "$1" = "--restore" ]; then
@@ -143,15 +233,15 @@ fi
 conditional_clear
 #Definir clientes DHCP
 if ps -A | grep dhcpcd &>${chamac_output_device}; then
-dhcpclientrestore=dhcpcd
+    dhcpclientrestore=dhcpcd
 fi
 
 if ps -A | grep dhclient &>${chamac_output_device}; then
-dhcpclientrestore=dhclient
+    dhcpclientrestore=dhclient
 fi
 
 if ps -A | grep pump &>${chamac_output_device}; then
-dhcpclientrestore=pump
+    dhcpclientrestore=pump
 fi
 
 #Comprobar el daemon del sistema
@@ -198,31 +288,30 @@ for INTERFACE in ${interfaces[@]}; do
 	     fi
 		    
 	    	while [ "$MAC_ORIGINAL" != "$MAC_ACTUAL" ]; do
-		    ifconfig $INTERFACE down
-		    ip link set $INTERFACE address $MAC_ORIGINAL
-		    ifconfig $INTERFACE up
+		    ifconfig $INTERFACE down &>${chamac_output_device}
+		    ip link set $INTERFACE address $MAC_ORIGINAL &>${chamac_output_device}
+		    ifconfig $INTERFACE up &>${chamac_output_device}
 		    break && $0 -r
 		    conditional_clear
 		done
 done
 #Reiniciar las daemons
 if [ "$chamac_detected_daemon" != "" ]; then
-"$chamac_detected_daemon" start &>${chamac_output_device}
-else
+    "$chamac_detected_daemon" start &>${chamac_output_device}
+  else
     #Reiniciar posible servicio DHCP
-if [ "$chamac_detected_daemon" == "" ]; then
-  if [ $dhcpclient ]; then
-    sleep 2
-    $dhcpclient &>${chamac_output_device}
-  fi
-
-fi
+      if [ "$chamac_detected_daemon" == "" ]; then
+	  if [ $dhcpclient ]; then
+	      sleep 2
+	      $dhcpclient &>${chamac_output_device}
+	  fi
+      fi
 fi
 $0 -s
 exit
 elif [ "$1" = "-a" -o "$1" = "--autostart" ]; then
-conditional_clear
-echo -ne "Privileges \e[0;31mroot\e[0m--->		"
+    conditional_clear
+    echo -ne "Privileges \e[0;31mroot\e[0m--->		"
 if [ $(/usr/bin/id -u) = 0 ]; then
     echo -e "\e[1;32mOK!\e[0m"
 else
@@ -240,19 +329,20 @@ else
 fi
 echo -ne "Does \e[0;31mSUDO\e[0m system exist? --->	"
 if [ $autoboot = 1 ]; then
-rm -f /etc/xdg/autostart/autochamac.desktop
+    rm -f /etc/xdg/autostart/autochamac.desktop
+    sed -i '/\/usr\/bin\/chamac/d' /etc/sudoers
 if [ -f /etc/sudoers ]; then
-  echo -e "\e[1;32mYes\e[0m"
+    echo -e "\e[1;32mYes\e[0m"
 else
-  echo -e "\e[1;31mNo\e[0m"
+    echo -e "\e[1;31mNo\e[0m"
 fi
 elif [ $autoboot = 0 ]; then
-echo "[Desktop Entry]
-Exec=/usr/bin/chamac
-StartupNotify=true
-Terminal=false
-Type=Application
-X-GNOME-Autostart-enabled=true"> /etc/xdg/autostart/autochamac.desktop
+    echo "[Desktop Entry]
+    Exec=/usr/bin/chamac
+    StartupNotify=true
+    Terminal=false
+    Type=Application
+    X-GNOME-Autostart-enabled=true"> /etc/xdg/autostart/autochamac.desktop
 if [ -f /etc/sudoers ]; then
   echo -e "\e[1;32mYes\e[0m"
 echo "$(logname) ALL=(root) NOPASSWD: /usr/bin/chamac" >>/etc/sudoers
@@ -276,20 +366,22 @@ else
 fi
 custommac="$(echo $2 | grep -oiE '([0-9A-F]{2}:){5}[0-9A-F]{2}$')"
 if [ $custommac ]; then
-custommacmode=1
+    custommacmode=1
 elif [ -z $2 ]; then
-echo -e "No se ha especificado ninguna \e[1;31mMAC\e[0m"
-exit
-else
-echo -e "La MAC \e[1;31m$2\e[0m no es una \e[1;31mMAC\e[0m valida"
-exit
+    echo -e "No se ha especificado ninguna \e[1;31mMAC\e[0m"
+    exit
+  else
+    echo -e "La MAC \e[1;31m$2\e[0m no es una \e[1;31mMAC\e[0m valida"
+    exit
 fi
 elif [ "$1" = "-h" -o "$1" = "--help" ]; then
-echo "Chamac v0.7 (Change all MAC)"
+echo "Chamac v0.8 (Change all MAC)"
 echo "Uso: chamac [options]"
 echo
 echo "  -a,  --autostart		Inicia el script con el sistema"
 echo -e "					Estado actual: $autobootstatus"
+echo "  -u,  --update			Actualiza la Base de Datos MAC"
+echo -e "					Base Actual: \e[1;31m$dbMAC\e[0m"
 echo "  -m,  --macchanger		Usar macchanger para generar MAC"
 echo "  -r,  --restore		Restaura las MAC Original"
 echo "  -s,  --show			Muestra todas las MAC"
@@ -303,7 +395,7 @@ fi
 
 conditional_clear
 echo -e "=========================================="
-echo -e "|           \e[1;34mChaMAC\e[0m 0.7 by vk496          |"
+echo -e "|           \e[1;34mChaMAC\e[0m 0.8 by vk496          |"
 echo -e "|                                        |"
 echo -e "|          netenti.blogspot.com          |"
 echo -e "|                                        |"
@@ -339,45 +431,54 @@ else
 fi
 echo -ne "Autoboot Status--->	"
 if [ $autoboot = 1 ]; then
-echo -e "$autobootstatus"
+    echo -e "$autobootstatus"
 elif [ $autoboot = 0 ]; then
-echo -e "$autobootstatus"
+    echo -e "$autobootstatus"
 fi
+
+echo -ne "Chamac Database--->	"
+if [ $dbMAC = "N/A" ]; then
+    echo -e "\e[1;33mNot installed\e[0m (use \e[1;31mchamac --update\e[0m)"
+else
+    echo -e "\e[1;32mOK!\e[0m"
+    echo -e "	Database: \e[1;31m$dbMAC\e[0m"
+fi
+
 echo -ne "Chamac Mode------->	"
 if [ $macchangermode = 1 ]; then
-echo -e "\e[1;32mMacchanger\e[0m"
+    echo -e "\e[1;32mMacchanger\e[0m"
 if type macchanger &>${chamac_output_device}; then
 echo -ne "\e[0;31mmacchanger\e[0m Status->	"
 if [ $(cat $(which macchanger) | wc -l) = 53 ]; then
-echo -e "\e[1;33mObsoleted\e[0m"
-macchangerviejo=1
-else
-echo -e "\e[1;32mOK!\e[0m"
-macchangerviejo=0
+    echo -e "\e[1;33mObsoleted\e[0m"
+    macchangerviejo=1
+  else
+    echo -e "\e[1;32mOK!\e[0m"
+    macchangerviejo=0
 fi
 else
-echo -e "\e[1;31mNot installed!\e[0m"
-exit
+    echo -e "\e[1;31mNot installed!\e[0m"
+    exit
 fi
 elif [ $macchangermode = 0 ]; then
 if [ $custommacmode = 1 ]; then
-echo -e "\e[1;32mCustom\e[0m"
-else
-echo -e "\e[1;32mNormal\e[0m"
+    echo -e "\e[1;32mCustom\e[0m"
+  else
+    echo -e "\e[1;32mNormal\e[0m"
 fi
 fi
 #Buscar posibles clientes DHCP
 clientesdhcp() {
 if ps -A | grep dhcpcd &>${chamac_output_device}; then
-dhcpclient=dhcpcd
+    dhcpclient=dhcpcd
 fi
 
 if ps -A | grep dhclient &>${chamac_output_device}; then
-dhcpclient=dhclient
+    dhcpclient=dhclient
 fi
 
 if ps -A | grep pump &>${chamac_output_device}; then
-dhcpclient=pump
+    dhcpclient=pump
 fi
 }
 #Comprobar el daemon del sistema
@@ -424,11 +525,11 @@ viaifconfig() {
 for (( c=1; c<=6; c++ ))
 do
 for INTERFACE in ${interfaces[@]}; do
-		MAC_ACTUAL="$(cat /sys/class/net/$INTERFACE/address)"
-	
+    MAC_ACTUAL="$(cat /sys/class/net/$INTERFACE/address)"
+    
 	  until [ -N $MAC_ACTUAL ]; do
-	  ifconfig $INTERFACE down &>${chamac_output_device}
-	  ip link set $INTERFACE down &>${chamac_output_device}
+	      ifconfig $INTERFACE down &>${chamac_output_device}
+	      ip link set $INTERFACE down &>${chamac_output_device}
 	  if [ $custommacmode = 0 ]; then
 	      ip link set dev $INTERFACE address $(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//') &>${chamac_output_device}
 	    elif [ $custommacmode = 1 ]; then
@@ -446,15 +547,15 @@ done
 #Cmabar MAC con macchanger
 viamacchanger() {
 for interfaz in "${interfaces[@]}"; do
-ifconfig $interfaz down &>${chamac_output_device}
-ip link set $interfaz down &>${chamac_output_device}
-macchanger -r $interfaz &>${chamac_output_device}
+    ifconfig $interfaz down &>${chamac_output_device}
+    ip link set $interfaz down &>${chamac_output_device}
+    macchanger -r $interfaz &>${chamac_output_device}
 done
 }
 if [ $macchangermode = 0 ]; then
-viaifconfig
+    viaifconfig
 elif [ $macchangermode = 1 ]; then
-viamacchanger
+    viamacchanger
 fi
 conditional_clear
 interfacesup
@@ -462,8 +563,8 @@ interfacesup
 interfacesup() {
 #Levantar interfaces
 for curInterfaceup in "${interfaces[@]}"; do
-    ifconfig $curInterfaceup up
-    ip link set $curInterfaceup up
+    ifconfig $curInterfaceup up &>${chamac_output_device}
+    ip link set $curInterfaceup up &>${chamac_output_device}
 done
 listo
 }
@@ -472,28 +573,70 @@ mac
 listo() {
 for INTERFACE in ${interfaces[@]}; do
     rutasecundaria=$(cat /etc/udev/rules.d/70-persistent-net.rules | grep $INTERFACE | awk '{print $4}' | grep -o -P '(?<=").*(?=")')
-	    if [ $rutasecundaria ]; then
-		    MAC_ORIGINAL=$(cat /etc/udev/rules.d/70-persistent-net.rules | grep $INTERFACE | awk '{print $4}' | grep -o -P '(?<=").*(?=")')
-	    else
-		    if [ -e /sys/class/net/$INTERFACE/phy80211/addresses ]; then
-			  MAC_ORIGINAL=$(cat /sys/class/net/$INTERFACE/phy80211/addresses)
-		    else
-			  rutaultima=$(ethtool -P $INTERFACE | grep Permanent)
-			    if [ "ethtool -P $INTERFACE | grep Permanent" ]; then
-				  MAC_ORIGINAL=$(ethtool -P $INTERFACE | grep Permanent | awk '{print $3}')
-			    else
-				  MAC_ORIGINAL="??:??:??:??:??:??"
-			    fi
+  if [ $rutasecundaria ]; then
+      MAC_ORIGINAL=$(cat /etc/udev/rules.d/70-persistent-net.rules | grep $INTERFACE | awk '{print $4}' | grep -o -P '(?<=").*(?=")')
+    else
+	if [ -e /sys/class/net/$INTERFACE/phy80211/addresses ]; then
+	    MAC_ORIGINAL=$(cat /sys/class/net/$INTERFACE/phy80211/addresses)
+	  else
+	    rutaultima=$(ethtool -P $INTERFACE | grep Permanent)
+	      if [ "ethtool -P $INTERFACE | grep Permanent" ]; then
+		  MAC_ORIGINAL=$(ethtool -P $INTERFACE | grep Permanent | awk '{print $3}')
+		else
+		  MAC_ORIGINAL="??:??:??:??:??:??"
+	      fi
+	fi
+  fi
+    MAC_ACTUAL="$(cat /sys/class/net/$INTERFACE/address)"
+    
+if [ ! $OUIruta = "N/A" ]; then	
+    MAC_A="$(echo $MAC_ACTUAL| tr -d :)"
+    MAC_O="$(echo $MAC_ORIGINAL| tr -d :)"
+		
+    MAClist=$(cat $OUIruta | sed 's/\t/ /g' | awk '{ gsub("-", "", $1); gsub(":", "", $1); gsub("/44", "", $1); gsub("/40", "", $1); gsub("/36", "", $1); gsub("/32", "", $1); gsub("/25", "", $1); gsub("/24", "", $1); gsub("/16", "", $1); gsub(/[ ]+/," "); print }')
+    i=6
 
-		    fi
-	     fi
-		    
-	    	MAC_ACTUAL="$(cat /sys/class/net/$INTERFACE/address)"
-	    		echo "================================\\"
-			echo -e "   INTERFACE:\e[1;35m $INTERFACE \e[0m 		 \\"
-			echo -e "MAC ORIGINAL: $MAC_ORIGINAL	  #"
-			echo -e "  MAC ACTUAL:\e[1;31m $MAC_ACTUAL \e[0m /"
-			echo "================================/"
+while [ $i -le 12 ]; do
+      SEARCHING_RESULT_o=$(echo "$MAClist" |grep -i ^${MAC_O:0:i}|perl -pi -e 's/#/\e[0m\e[1;31m-\e[0m\e[1;34m/g')
+      SEARCHING_EXITCODE_o=$?
+      lineas_o=$(echo "$SEARCHING_RESULT_o" | grep -c "")
+     if [ "$lineas_o" = 1 ]; then
+	if [ "$SEARCHING_EXITCODE_o" = 0 ]; then
+	    FABRICANTE_MAC_ORIGINAL="(\e[1;34m$(echo "$SEARCHING_RESULT_o"|cut -d " " -f 2-22)\e[0m)"
+	fi
+     fi
+
+      SEARCHING_RESULT=$(echo "$MAClist" |grep -i ^${MAC_A:0:i}|perl -pi -e 's/#/-/g')
+      SEARCHING_EXITCODE=$?
+      lineas=$(echo "$SEARCHING_RESULT" | grep -c "")
+     if [ "$lineas" = 1 ]; then
+	if [ "$SEARCHING_EXITCODE" = 0 ]; then
+	    FABRICANTE_MAC_FALSA=$(echo "$SEARCHING_RESULT"|cut -d " " -f 2-22)
+	fi
+	break
+     fi
+
+    if [ $i -eq 12 ]; then
+      echo unknown
+    fi
+
+    let i=i+1
+done
+
+  else
+      FABRICANTE_MAC_FALSA="\e[1;31mN/A\e[0m"
+      FABRICANTE_MAC_ORIGINAL="(\e[1;31mN/A\e[0m)"
+fi
+
+if [ -z $FABRICANTE_MAC_FALSA ]; then
+  FABRICANTE_MAC_FALSA="unknown"
+fi
+	    	
+	    		echo "=================================================\\"
+			echo -e "   INTERFACE:\e[1;35m $INTERFACE \e[0m 		 	"
+			echo -e "MAC ORIGINAL: $MAC_ORIGINAL $FABRICANTE_MAC_ORIGINAL"
+			echo -e "  MAC ACTUAL:\e[1;31m $MAC_ACTUAL \e[0m ($FABRICANTE_MAC_FALSA)	"
+			echo "=================================================/"
 done
 echo
 if [ $custommacmode = 1 ]; then
